@@ -45,3 +45,44 @@ Dashboard confirmation: `https://192.168.199.129` -> Endpoints -> agent `ubuntu-
 ### Screenshot
 
 - `docs/screenshots/jour2-agent-ubuntu-active.png`
+
+## Task 2 - Deploy OWASP Juice Shop as vulnerable target
+
+### Method
+
+Deployed OWASP Juice Shop as a Docker container on the same Ubuntu VM that hosts the Wazuh Manager and Agent. This co-location is intentional: the Wazuh Agent already installed (Task 1) will be able to monitor Juice Shop logs for the Day 3 attack scenarios.
+
+### Commands
+
+```bash
+docker run -d --name juice-shop -p 3000:3000 bkimminich/juice-shop
+docker ps
+```
+
+### Verification
+
+- 4 containers running on the VM: wazuh.manager, wazuh.indexer, wazuh.dashboard, juice-shop
+- Juice Shop accessible from Windows host at http://192.168.199.129:3000
+
+### Manual attack validation - SQL Injection (OWASP A03:2021)
+
+To confirm Juice Shop is indeed vulnerable and ready as an attack target, performed a manual SQL injection on the login form:
+
+- Email field: `' OR 1=1--`
+- Password field: `test`
+- Result: authenticated as admin@juice-sh.op without knowing the actual admin password
+
+Two Juice Shop challenges auto-triggered:
+1. Login Admin - proof of successful SQL injection (authentication bypass)
+2. Error Handling - triggered by malformed input, exposing raw error to the client
+
+### Explanation
+
+Juice Shop backend concatenates user input into the SQL query. The payload closes the email string prematurely with `'`, forces the WHERE clause to always evaluate true with `OR 1=1`, and comments out the password check with `--`.
+
+Real-world mitigation: use prepared statements / parameterized queries instead of string concatenation. All modern ORMs (Sequelize, Django ORM, Hibernate) do this by default.
+
+### Screenshot
+
+- docs/screenshots/jour2-juice-shop-sqli-admin.png - proof of admin login via SQL injection, both challenges solved
+
