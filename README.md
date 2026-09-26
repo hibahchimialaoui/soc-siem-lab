@@ -31,4 +31,4 @@ Progress tracked via GitHub milestones and issues.
 
 ## Author
 
-Maria — 4th-year Computer Networks & Cybersecurity engineering student, EMSI Tanger.
+Hiba HACHIMI ALAOUI — 5th-year Computer Networks & Cybersecurity engineering student, EMSI Tanger.
