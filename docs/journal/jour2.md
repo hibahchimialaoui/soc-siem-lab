@@ -86,3 +86,69 @@ Real-world mitigation: use prepared statements / parameterized queries instead o
 
 - docs/screenshots/jour2-juice-shop-sqli-admin.png - proof of admin login via SQL injection, both challenges solved
 
+
+## Task 3 - Active Directory Domain Setup (lab.local)
+
+### Method
+
+Installed AD DS role on Windows Server 2025 Datacenter, then promoted to first Domain Controller of new forest lab.local.
+
+### Environment challenges
+
+1. First AD install interrupted by power loss during initial promotion attempt, leaving CBS corruption (error 0x800f0983).
+2. Insufficient VM disk space (20GB) - expanded to 60GB via VMware + LVM resize (removed Recovery partition first).
+3. Insufficient VM RAM (4GB) caused freeze at 30% - increased to 6GB.
+4. Windows Defender real-time protection slowed installation - disabled with Set-MpPreference -DisableRealtimeMonitoring $true.
+5. Windows Update service interfering - temporarily stopped wuauserv.
+6. Install-WindowsFeature freezing due to RPC issues - bypassed using direct DISM: DISM /Online /Enable-Feature /FeatureName:DirectoryServices-DomainController /Source:wim:D:\sources\install.wim:4 /LimitAccess /All
+
+### Recovery commands used
+
+```powershell
+DISM /Online /Cleanup-Image /CheckHealth
+DISM /Online /Cleanup-Image /RestoreHealth
+sfc /scannow
+Set-MpPreference -DisableRealtimeMonitoring $true
+Stop-Service wuauserv -Force
+Set-Service wuauserv -StartupType Disabled
+Install-ADDSForest -DomainName "lab.local" -DomainNetbiosName "LAB" -InstallDns -SafeModeAdministratorPassword (ConvertTo-SecureString "SocLabDSRM2026!" -AsPlainText -Force) -Force
+```
+
+### Final domain configuration
+
+- Forest: lab.local
+- Mode: Windows2025Domain (first new functional level since 2016)
+- NetBIOS: LAB
+- DC: WIN-1GVQTED008D.lab.local (192.168.199.131)
+- DNS Server: integrated on DC
+
+### Users created
+
+- alice (Alice Martin) - password Wazuh2026!
+- bob (Bob Dubois) - password Wazuh2026!
+- admin.test (Admin Test) - password Wazuh2026!
+
+Weak intentionally-guessable password to enable Hydra brute-force testing at Day 3.
+
+### Group created
+
+- IT-Admins (Global, Security) with members: alice, admin.test
+- Rationale: high-privilege group targeted by kerberoasting scenarios.
+
+### DNS validation
+
+nslookup lab.local returns 192.168.199.131 - domain resolution operational.
+
+### Screenshots
+
+- docs/screenshots/jour2-ad-forest-lab-local-created.png
+- docs/screenshots/jour2-ad-users-created.png
+- docs/screenshots/jour2-ad-complete-verification.png
+
+### Real-world learnings
+
+- Always take a VM snapshot before AD DS promotion in production.
+- DCs need at least 6-8 GB RAM to avoid swap-related freezes.
+- Microsoft recommends AV exclusions on DCs (NTDS.dit, SYSVOL, GPT paths).
+- Windows Server 2025 introduces first new domain functional level since 2016 (improved Kerberos PKINIT, stronger NTDS encryption).
+
