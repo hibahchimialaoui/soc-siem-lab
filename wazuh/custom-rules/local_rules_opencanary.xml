@@ -1,0 +1,45 @@
+<group name="opencanary,honeypot,">
+
+  <rule id="100200" level="10">
+    <decoded_as>json</decoded_as>
+    <field name="node_id">opencanary-1</field>
+    <description>OpenCanary honeypot: activity detected on decoy service</description>
+    <group>honeypot,pci_dss_10.6.1,gdpr_IV_35.7.d,</group>
+  </rule>
+
+  <rule id="100201" level="12">
+    <if_sid>100200</if_sid>
+    <field name="logtype">4002</field>
+    <description>OpenCanary: SSH login attempt on honeypot (credentials captured)</description>
+    <group>honeypot,authentication_failures,attack,</group>
+  </rule>
+
+  <rule id="100202" level="12">
+    <if_sid>100200</if_sid>
+    <field name="logtype">2001</field>
+    <description>OpenCanary: HTTP request on honeypot</description>
+    <group>honeypot,web,attack,</group>
+  </rule>
+
+  <rule id="100203" level="12">
+    <if_sid>100200</if_sid>
+    <field name="logtype">2000</field>
+    <description>OpenCanary: HTTP login attempt on honeypot</description>
+    <group>honeypot,web,attack,</group>
+  </rule>
+
+  <rule id="100204" level="12">
+    <if_sid>100200</if_sid>
+    <field name="logtype">6001</field>
+    <description>OpenCanary: FTP login attempt on honeypot</description>
+    <group>honeypot,authentication_failures,attack,</group>
+  </rule>
+
+  <rule id="100205" level="12">
+    <if_sid>100200</if_sid>
+    <field name="logtype">8001</field>
+    <description>OpenCanary: Telnet login attempt on honeypot</description>
+    <group>honeypot,authentication_failures,attack,</group>
+  </rule>
+
+</group>

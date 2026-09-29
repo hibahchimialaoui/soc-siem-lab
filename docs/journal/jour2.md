@@ -207,3 +207,80 @@ The critical alert (level 15) triggered by legitimate SSH-launched PowerShell de
 - CIS Windows Server 2025 policy in SCA gives automated compliance evaluation - strong reporting bonus.
 - Alert tuning is necessary: even legitimate admin activity (PowerShell via SSH) triggers critical alerts on a DC. In production, exceptions would be defined per role/user.
 
+
+---
+
+## Task 5 — Honeypot OpenCanary + intégration Wazuh (issue #13)
+
+### Objectif
+Déployer un honeypot multi-services sur la VM Ubuntu (192.168.199.129), l'intégrer à Wazuh, et écrire des règles custom pour transformer chaque interaction avec un service leurre en **alerte de niveau 12** dans le dashboard.
+
+### Actions réalisées
+
+**a) Installation OpenCanary 0.9.10 dans un venv Python**
+```bash
+mkdir ~/honeypot && cd ~/honeypot
+python3 -m venv env
+source env/bin/activate
+pip install opencanary scapy pcapy-ng
+opencanaryd --copyconfig    # crée /etc/opencanaryd/opencanary.conf
+```
+
+**b) Activation des services sur ports non-conflictuels**
+Modification de `/etc/opencanaryd/opencanary.conf` (voir [`honeypot/opencanary.conf`](../../honeypot/opencanary.conf)) : FTP:21, Telnet:23, SSH:**2222** (le vrai OpenSSH tourne sur 22), HTTP:**8888** (Wazuh occupe 443, Juice Shop 3000), MySQL:3306, VNC:5000, Redis:6379.
+
+**c) Démarrage du daemon**
+```bash
+sudo env "PATH=$PATH" opencanaryd --start
+sudo ss -tlnp | grep -E ":(21|23|2222|3306|5000|6379|8888)"
+# → 7 lignes LISTEN twistd
+```
+
+**d) Test de génération d'alerte locale**
+```bash
+ssh -o StrictHostKeyChecking=no admin@127.0.0.1 -p 2222
+# password: hacker2026
+# → événement logtype 4002 (SSH login) capturé dans /var/tmp/opencanary.log
+```
+JSON capturé : `{"logtype": 4002, "logdata": {"USERNAME": "admin", "PASSWORD": "hacker2026"}, "src_host": "127.0.0.1", "dst_port": 2222, ...}`
+
+**e) Intégration Wazuh agent**
+Ajout d'un bloc `<localfile>` dans `/var/ossec/etc/ossec.conf` sur la VM Ubuntu pour surveiller `/var/tmp/opencanary.log` en `log_format: json`, puis restart de l'agent.
+
+**f) Création de règles custom sur le manager Wazuh**
+Wazuh ne fournit pas de règles OpenCanary par défaut. Fichier [`wazuh/custom-rules/local_rules_opencanary.xml`](../../wazuh/custom-rules/local_rules_opencanary.xml) créé avec 6 règles :
+- **100200** (level 10) : règle parent, matche tout événement `node_id: opencanary-1`
+- **100201** (level 12) : SSH login attempt (creds capturés)
+- **100202/203** (level 12) : HTTP request / login
+- **100204** (level 12) : FTP login attempt
+- **100205** (level 12) : Telnet login attempt
+
+Installation via `docker cp` dans le container `single-node-wazuh.manager-1`, puis `wazuh-control restart`.
+
+### Résultats
+
+✅ Alerte **niveau 12** ("OpenCanary: SSH login attempt on honeypot (credentials captured)") visible dans le dashboard Wazuh → **Threat Hunting** → **Events** avec filtre `rule.id : 100201`.
+
+Le pipeline complet fonctionne :
+```
+Attaquant --> OpenCanary (port 2222) --> /var/tmp/opencanary.log
+                                       --> Wazuh Agent
+                                       --> Wazuh Manager (Docker)
+                                       --> Rule 100201 (level 12)
+                                       --> Dashboard Wazuh
+```
+
+Preuve : ![Alerte OpenCanary niveau 12](../screenshots/jour2-honeypot-opencanary-ssh-alert.png)
+
+### Difficultés rencontrées
+
+1. **Conflit de ports HTTP** : `http.port: 8080` par défaut entrait en collision avec `httpproxy.port: 8080` (même si httpproxy désactivé). Résolu en passant HTTP sur 8888.
+2. **Wazuh manager dans Docker** : `/var/ossec/etc/rules/` n'existe pas sur l'hôte Ubuntu — les règles doivent être copiées **dans le container** via `docker cp`, puis le manager restart via `docker exec /var/ossec/bin/wazuh-control restart`.
+3. **Absence de règles OpenCanary natives** : Wazuh ne fournit rien pour ce format JSON — écriture de 6 règles custom (parent + 5 filles par service).
+
+### Valeur pédagogique
+
+Ce composant montre concrètement la **détection par leurre** — un des rares mécanismes SIEM à taux de faux positifs proche de zéro : toute interaction avec un service inexistant est par définition suspecte.
+
+
+
