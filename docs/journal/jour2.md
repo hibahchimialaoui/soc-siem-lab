@@ -152,3 +152,58 @@ nslookup lab.local returns 192.168.199.131 - domain resolution operational.
 - Microsoft recommends AV exclusions on DCs (NTDS.dit, SYSVOL, GPT paths).
 - Windows Server 2025 introduces first new domain functional level since 2016 (improved Kerberos PKINIT, stronger NTDS encryption).
 
+
+## Task 4 - Sysmon + Wazuh Agent on Windows Server DC
+
+### Method
+
+Installed Sysmon (SwiftOnSecurity config) for detailed Windows event capture, then deployed Wazuh Windows agent v4.12.0 pointing to Manager at 192.168.199.129. Added Sysmon Operational channel to agent config for forwarding to Manager.
+
+### Commands used
+
+```powershell
+# 1. Download Sysmon + SwiftOnSecurity config
+mkdir C:\Setup
+cd C:\Setup
+Invoke-WebRequest -Uri "https://download.sysinternals.com/files/Sysmon.zip" -OutFile "C:\Setup\Sysmon.zip"
+Expand-Archive -Path "C:\Setup\Sysmon.zip" -DestinationPath "C:\Setup\Sysmon" -Force
+Invoke-WebRequest -Uri "https://raw.githubusercontent.com/SwiftOnSecurity/sysmon-config/master/sysmonconfig-export.xml" -OutFile "C:\Setup\Sysmon\sysmonconfig-export.xml"
+
+# 2. Install Sysmon
+cd C:\Setup\Sysmon
+.\Sysmon64.exe -accepteula -i sysmonconfig-export.xml
+
+# 3. Download and install Wazuh agent v4.12.0
+Invoke-WebRequest -Uri "https://packages.wazuh.com/4.x/windows/wazuh-agent-4.12.0-1.msi" -OutFile "C:\Setup\wazuh-agent-4.12.0-1.msi"
+Start-Process msiexec.exe -Wait -ArgumentList '/i C:\Setup\wazuh-agent-4.12.0-1.msi /q WAZUH_MANAGER="192.168.199.129" WAZUH_AGENT_NAME="windows-dc-lab"'
+
+# 4. Add Sysmon channel to Wazuh config, then start service
+Start-Service Wazuh
+```
+
+### Verification
+
+- 4 log channels monitored: Application, Security, System, Microsoft-Windows-Sysmon/Operational
+- Additional modules enabled: SCA (CIS Windows Server 2025 policy), Syscollector, FIM
+- Dashboard shows 2 active agents (Ubuntu + Windows), 1187 alerts in first 24h
+- Level 15+ critical alert triggered by PowerShell process creation on DC (Sysmon Event ID 1)
+
+### Pipeline validation
+
+End-to-end flow confirmed:
+Sysmon (Event ID 1: process creation) -> Windows Event Log -> Wazuh Agent -> Wazuh Manager -> Indexer -> Dashboard.
+
+The critical alert (level 15) triggered by legitimate SSH-launched PowerShell demonstrates the SIEM works. In production, a rule tuning would distinguish admin activity from LOLBin attacks using Event ID 4104 (ScriptBlock content) and parent process context.
+
+### Screenshots
+
+- docs/screenshots/jour2-wazuh-2-agents-active-alerts.png - both agents active, alerts summary
+- docs/screenshots/jour2-sysmon-critical-alert-powershell.png - drill-down of critical alert showing Sysmon data
+
+### Learnings
+
+- Version pinning between agent and manager is critical (both v4.12.0). Wazuh refuses newer agents with clear error - design choice preventing format incompatibility.
+- Sysmon SwiftOnSecurity config is the de-facto standard - balanced between coverage and log volume.
+- CIS Windows Server 2025 policy in SCA gives automated compliance evaluation - strong reporting bonus.
+- Alert tuning is necessary: even legitimate admin activity (PowerShell via SSH) triggers critical alerts on a DC. In production, exceptions would be defined per role/user.
+
