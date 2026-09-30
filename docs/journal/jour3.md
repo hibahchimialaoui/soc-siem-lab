@@ -64,3 +64,51 @@ Ce scenario demontre :
 3. La complementarite honeypot ? IDS reseau pour une couverture complete
 
 
+
+---
+
+## Task 3 — Attack #2 : SSH brute-force with Hydra (issue #22)
+
+### Objectif
+Depuis Kali, lancer un brute-force SSH avec Hydra et verifier la detection par Wazuh.
+
+### MITRE ATT&CK
+- **T1110.001** — Brute Force: Password Guessing
+- Tactique : Credential Access
+
+### Tentative 1 : brute-force contre le honeypot OpenCanary (port 2222)
+
+Resultat : `[ERROR] could not connect - Socket error: disconnected`.
+
+**Diagnostic** : un client OpenSSH standard (`ssh -vvv`) negocie correctement avec le honeypot (kex, cipher, password auth rejetee proprement). Hydra utilise libssh, dont la proposition d algorithmes de negociation differe de celle d OpenSSH. Le serveur SSH simule par OpenCanary (base sur Twisted Conch, une implementation Python) ne gere pas cette variante de negociation et coupe la connexion.
+
+**Enseignement** : les honeypots bases sur des implementations maison du protocole SSH peuvent avoir une compatibilite partielle avec les outils d attaque reels selon leur bibliotheque SSH sous-jacente. Un attaquant utilisant Hydra/libssh contre ce honeypot particulier ne serait pas correctement piege - une limite a documenter pour un vrai deploiement.
+
+### Tentative 2 (reussie) : brute-force contre le vrai service SSH (port 22)
+
+Resultat : 15/15 tentatives executees, 0 mot de passe valide trouve (le compte reel n a pas ete compromis - wordlist generique ne contenant pas le vrai mot de passe).
+
+### Detection Wazuh (native, sans regle custom)
+
+Wazuh detecte le brute-force via ses regles par defaut, en cascade multi-niveaux :
+
+| rule.id | level | Description |
+|---|---|---|
+| 5760 | 5 | sshd: authentication failed (1 par tentative) |
+| 5557 | 5 | unix_chkpwd: Password check failed |
+| 5503 | 5 | PAM: User login failed |
+| **2502** | **10** | **syslog: User missed the password more than one time** (agregation) |
+
+La regle **2502 (level 10)** est la plus significative : elle detecte automatiquement le pattern "plusieurs echecs consecutifs du meme compte", sans configuration additionnelle - demontre la robustesse de la detection SSHD native de Wazuh.
+
+**Total** : 51 evenements observes sur 24h correspondant a ce test.
+
+### Preuve
+![Brute-force SSH detecte par Wazuh](../screenshots/jour3-attack2-hydra-ssh-bruteforce-overview.png)
+![Timeline et detail des evenements](../screenshots/jour3-attack2-hydra-ssh-bruteforce-timeline.png)
+
+### Valeur pedagogique
+1. **Detection native vs custom** : contrairement au honeypot (qui necessite des regles ecrites a la main), la detection SSHD de Wazuh fonctionne out-of-the-box grace a ses decodeurs syslog/PAM par defaut.
+2. **Limite outillage attaque/defense** : tous les honeypots ne sont pas compatibles avec tous les outils d attaque - la compatibilite protocolaire (libssh vs OpenSSH vs Twisted Conch) compte.
+3. **Detection en profondeur** : le meme evenement remonte a plusieurs niveaux (PAM, unix_chkpwd, sshd, syslog agregation) - illustre le concept de defense in depth cote logs.
+
